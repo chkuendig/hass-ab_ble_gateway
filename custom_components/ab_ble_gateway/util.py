@@ -111,9 +111,7 @@ def parse_raw_data(data: bytearray):
     if len(service_data_list) > 0:
         for service_data_elem in service_data_list:
             service_data_uuid = "0000{:04x}-0000-1000-8000-00805f9b34fb".format((service_data_elem[3] << 8) | service_data_elem[2])
-            service_data[service_data_uuid
-
-                         ] = service_data_elem[4:]
+            service_data[service_data_uuid] = bytes(service_data_elem[4:])
             service_uuids.append(service_data_uuid)
 
     manufacturer_data = {}

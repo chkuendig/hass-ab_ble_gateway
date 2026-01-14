@@ -17,7 +17,7 @@
     "ab_ble_gateway"
   ],
   "requirements": [
-    "msgpack==1.0.4"
+    "msgpack>=1.0.4"
   ],
   "version": "0.1.0",
   "zeroconf": [

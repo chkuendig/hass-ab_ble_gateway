@@ -83,7 +83,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         source=source_id,
         can_connect=False,
     )
-    scanner = AbBleScanner(scanner_id=source_id, name=entry.title,  connector=connector, connectable=connectable)
+    scanner = AbBleScanner(source_id, entry.title, connector, connectable)
 
     config = entry.as_dict()
     await mqtt.async_subscribe(hass, config['data']['mqtt_topic'], scanner.async_on_mqtt_message, encoding=None)

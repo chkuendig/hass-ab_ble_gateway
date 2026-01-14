@@ -19,7 +19,7 @@ import voluptuous as vol
 import requests
 
 from homeassistant import config_entries, data_entry_flow
-from homeassistant.components import zeroconf
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.const import (
     CONF_HOST,
@@ -54,7 +54,7 @@ class AbBleFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_zeroconf(
-        self, discovery_info: zeroconf.ZeroconfServiceInfo
+        self, discovery_info: ZeroconfServiceInfo
     ) -> FlowResult:
         if not discovery_info.properties["hw"].startswith("4."):
             _LOGGER.error("Only AB BLE Gateway revisions 4.x are supported ")
