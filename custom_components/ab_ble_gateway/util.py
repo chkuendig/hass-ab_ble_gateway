@@ -16,6 +16,11 @@ def to_mac(addr: str) -> str:
     return ':'.join(f'{i:02X}' for i in addr)
 
 
+def _uuid16(value: int) -> str:
+    """Expand a 16/32-bit UUID with the Bluetooth base UUID."""
+    return f"{value:08x}-0000-1000-8000-00805f9b34fb"
+
+
 def parse_ap_ble_devices_data(devices_data):
     """ Converts the April Brother BLE Gateway Data Format into Raw HCI Packets """
     # See  https://wiki.aprbrother.com/en/User_Guide_For_AB_BLE_Gateway_V4.html#data-format
@@ -60,8 +65,7 @@ def parse_raw_data(data: bytearray):
     mac = (data[8 if is_ext_packet else 7:14 if is_ext_packet else 13])[::-1]
     complete_local_name = ""
     shortened_local_name = ""
-    service_class_uuid16 = None
-    service_class_uuid128 = None
+    service_uuids = []
     service_data_list = []
     man_spec_data_list = []
 
@@ -71,15 +75,19 @@ def parse_raw_data(data: bytearray):
             adstruct = data[adpayload_start:adpayload_start + adstuct_size]
             # https://www.bluetooth.com/specifications/assigned-numbers/generic-access-profile/
             adstuct_type = adstruct[1]
-            if adstuct_type == 0x02:
-                # AD type 'Incomplete List of 16-bit Service Class UUIDs'
-                service_class_uuid16 = (adstruct[2] << 8) | adstruct[3]
-            elif adstuct_type == 0x03:
-                # AD type 'Complete List of 16-bit Service Class UUIDs'
-                service_class_uuid16 = (adstruct[2] << 8) | adstruct[3]
-            elif adstuct_type == 0x06:
-                # AD type '128-bit Service Class UUIDs'
-                service_class_uuid128 = adstruct[2:]
+            if adstuct_type in (0x02, 0x03):
+                # AD types 'Incomplete/Complete List of 16-bit Service Class UUIDs',
+                # little-endian like everything else on air
+                for i in range(2, len(adstruct) - 1, 2):
+                    service_uuids.append(_uuid16(adstruct[i] | (adstruct[i + 1] << 8)))
+            elif adstuct_type in (0x04, 0x05):
+                # AD types 'Incomplete/Complete List of 32-bit Service Class UUIDs'
+                for i in range(2, len(adstruct) - 3, 4):
+                    service_uuids.append(_uuid16(int.from_bytes(adstruct[i:i + 4], "little")))
+            elif adstuct_type in (0x06, 0x07):
+                # AD types 'Incomplete/Complete List of 128-bit Service Class UUIDs'
+                for i in range(2, len(adstruct) - 15, 16):
+                    service_uuids.append(str(UUID(bytes=bytes(adstruct[i:i + 16][::-1]))))
             elif adstuct_type == 0x08:
                 # AD type 'shortened local name'
                 shortened_local_name = adstruct[2:].decode("utf-8")
@@ -101,13 +109,6 @@ def parse_raw_data(data: bytearray):
     else:
         local_name = shortened_local_name
 
-    service_uuids = []
-    if (service_class_uuid128 is not None):
-        service_uuids.append(UUID(bytes=bytes(service_class_uuid128)).hex)
-
-    if (service_class_uuid16 is not None):
-        service_uuids.append("0000{:04x}-0000-1000-8000-00805f9b34fb".format(service_class_uuid16))
-
     # https://github.com/hbldh/bleak/blob/c5cbb8485741331d03a3ac151e98f45edb560938/bleak/backends/corebluetooth/scanner.py#L82
     # https://github.com/hbldh/bleak/blob/60aa4aa23a97bda075770fec43202295602f1a9d/bleak/backends/winrt/scanner.py#L159
     service_data = {}
@@ -115,7 +116,8 @@ def parse_raw_data(data: bytearray):
         for service_data_elem in service_data_list:
             service_data_uuid = "0000{:04x}-0000-1000-8000-00805f9b34fb".format((service_data_elem[3] << 8) | service_data_elem[2])
             service_data[service_data_uuid] = bytes(service_data_elem[4:])
-            service_uuids.append(service_data_uuid)
+            if service_data_uuid not in service_uuids:
+                service_uuids.append(service_data_uuid)
 
     # Bleak/HA model manufacturer data as {company_id: payload}; an advertisement
     # may carry several blocks (e.g. different company ids), so keep them all.

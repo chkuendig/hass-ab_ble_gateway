@@ -100,3 +100,24 @@ def test_iter_garbage_and_missing_devices():
     assert list(util.iter_gateway_devices(b"\xc1\xc1\xc1")) == []
     assert list(util.iter_gateway_devices(msgpack.packb([1, 2, 3]))) == []
     assert list(util.iter_gateway_devices(msgpack.packb({"v": 1}))) == []
+
+
+def test_parse_16bit_service_uuid_list_is_little_endian_and_complete():
+    """Used to decode big-endian (95fe) and keep only the first UUID."""
+    adv = _parse(_device([FLAGS, b"\x03\x95\xfe\x0a\x18"]))
+    assert adv["service_uuids"] == [
+        "0000fe95-0000-1000-8000-00805f9b34fb",
+        "0000180a-0000-1000-8000-00805f9b34fb",
+    ]
+
+
+def test_parse_128bit_service_uuid_list():
+    uuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+    wire = bytes.fromhex(uuid.replace("-", ""))[::-1]
+    adv = _parse(_device([FLAGS, b"\x07" + wire]))
+    assert adv["service_uuids"] == [uuid]
+
+
+def test_service_data_uuid_not_duplicated():
+    adv = _parse(_device([FLAGS, b"\x03\x95\xfe", SERVICE_DATA]))
+    assert adv["service_uuids"] == ["0000fe95-0000-1000-8000-00805f9b34fb"]
