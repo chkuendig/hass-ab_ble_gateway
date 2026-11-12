@@ -1,5 +1,8 @@
 import logging
 from uuid import UUID
+
+import msgpack
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -38,7 +41,7 @@ def parse_raw_data(data: bytearray):
     try:
         adpayload_size = data[adpayload_start - 1]
     except IndexError:
-        return None, None
+        return None
     # check for BTLE msg size
     msg_length = data[2] + 3
     if (
@@ -46,7 +49,7 @@ def parse_raw_data(data: bytearray):
             adpayload_start + adpayload_size + (0 if is_ext_packet else 1)
         )
     ):
-        return None, None
+        return None
     # extract RSSI byte
     rssi_index = 18 if is_ext_packet else msg_length - 1
     rssi = data[rssi_index]
@@ -114,17 +117,14 @@ def parse_raw_data(data: bytearray):
             service_data[service_data_uuid] = bytes(service_data_elem[4:])
             service_uuids.append(service_data_uuid)
 
+    # Bleak/HA model manufacturer data as {company_id: payload}; an advertisement
+    # may carry several blocks (e.g. different company ids), so keep them all.
     manufacturer_data = {}
-
-    if (len(man_spec_data_list) > 1):
-        raise "Multiple Manufacturer Data Fields is not supported"
-
-    if len(man_spec_data_list) > 0:
-        manufacturer_id = int.from_bytes(
-            man_spec_data_list[0][2:4], byteorder="little"
-        )
-        manufacturer_value = bytes(man_spec_data_list[0][4:])
-        manufacturer_data[manufacturer_id] = manufacturer_value
+    for man_spec_data in man_spec_data_list:
+        if len(man_spec_data) < 4:
+            continue
+        manufacturer_id = int.from_bytes(man_spec_data[2:4], byteorder="little")
+        manufacturer_data[manufacturer_id] = bytes(man_spec_data[4:])
 
     return {
         "address": to_mac(mac),
@@ -134,3 +134,27 @@ def parse_raw_data(data: bytearray):
         "service_data": service_data,
         'manufacturer_data': manufacturer_data
     }
+
+
+def iter_gateway_devices(payload: bytes):
+    """Yield the raw device entries of a msgpack gateway message.
+
+    The gateway sometimes publishes truncated messages. Instead of dropping the
+    whole batch, stream-decode it and keep every device entry that is complete.
+    """
+    unpacker = msgpack.Unpacker(raw=True)
+    unpacker.feed(payload)
+    try:
+        for _ in range(unpacker.read_map_header()):
+            key = unpacker.unpack()
+            if key != b'devices':
+                unpacker.skip()
+                continue
+            count = unpacker.read_array_header()
+            for _ in range(count):
+                yield unpacker.unpack()
+            return
+    except msgpack.OutOfData:
+        _LOGGER.debug("Truncated gateway message (%d bytes), kept complete entries", len(payload))
+    except (msgpack.UnpackException, ValueError) as err:
+        _LOGGER.warning("Undecodable gateway message (%d bytes): %s", len(payload), err)

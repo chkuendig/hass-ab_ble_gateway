@@ -1,7 +1,7 @@
 """The April Brother BLE Gateway integration."""
 from __future__ import annotations
 from homeassistant.components.bluetooth import BaseHaRemoteScanner
-from .util import parse_ap_ble_devices_data, parse_raw_data
+from .util import iter_gateway_devices, parse_ap_ble_devices_data, parse_raw_data
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
     async_dispatcher_send,
@@ -11,7 +11,6 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-import msgpack
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components import mqtt
 from homeassistant.components.mqtt.models import ReceiveMessage
@@ -48,26 +47,26 @@ class AbBleScanner(BaseHaRemoteScanner):
 
     @callback
     def async_on_mqtt_message(self, msg: ReceiveMessage) -> None:
-        """Call the registered callback."""
-        try:
-            for d in msgpack.unpackb(msg.payload, raw=True)[b'devices']:
-                raw_data = parse_ap_ble_devices_data(d)
-                adv = parse_raw_data(raw_data)
-
-                self._async_on_advertisement(
-                    address=adv['address'].upper(),
-                    rssi=adv['rssi'],
-                    local_name=adv['local_name'],
-                    service_uuids=adv['service_uuids'],
-                    service_data=adv['service_data'],
-                    manufacturer_data=adv['manufacturer_data'],
-                    tx_power=None,
-                    details=dict(),
-                    # the msg.payload does have a field "time" but its time passed since boot and I don't know how to figure out the boot timestamp so we just use the current time here
-                    advertisement_monotonic_time=MONOTONIC_TIME()            )
-        except Exception as err:
-            _LOGGER.error(err)
-        return
+        """Feed every complete device entry of a gateway message to HA."""
+        for device in iter_gateway_devices(msg.payload):
+            try:
+                adv = parse_raw_data(parse_ap_ble_devices_data(device))
+            except (IndexError, ValueError, UnicodeDecodeError) as err:
+                _LOGGER.debug("Skipping malformed advertisement %s: %s", device, err)
+                continue
+            if adv is None:
+                continue
+            self._async_on_advertisement(
+                address=adv['address'].upper(),
+                rssi=adv['rssi'],
+                local_name=adv['local_name'],
+                service_uuids=adv['service_uuids'],
+                service_data=adv['service_data'],
+                manufacturer_data=adv['manufacturer_data'],
+                tx_power=None,
+                details=dict(),
+                # the msg.payload does have a field "time" but its time passed since boot and I don't know how to figure out the boot timestamp so we just use the current time here
+                advertisement_monotonic_time=MONOTONIC_TIME())
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
