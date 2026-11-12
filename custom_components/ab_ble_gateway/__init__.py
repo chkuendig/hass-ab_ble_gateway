@@ -43,7 +43,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class AbBleScanner(BaseHaRemoteScanner):
-    """Scanner for esphome."""
+    """Receive advertisements from the gateway's MQTT stream."""
 
     @callback
     def async_on_mqtt_message(self, msg: ReceiveMessage) -> None:
@@ -77,22 +77,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     source_id = str(entry.unique_id)
     connectable = False
 
-    connector = HaBluetoothConnector(
-        client=None,
-        source=source_id,
-        can_connect=False,
+    # Stock V4 firmware has no GATT transport. Register the receiver for
+    # availability/source tracking, without advertising connection capability.
+    scanner = AbBleScanner(source_id, entry.title, None, connectable)
+    entry.async_on_unload(scanner.async_setup())
+    entry.async_on_unload(
+        async_register_scanner(
+            hass,
+            scanner,
+            source_domain=DOMAIN,
+            source_config_entry_id=entry.entry_id,
+        )
     )
-    scanner = AbBleScanner(source_id, entry.title, connector, connectable)
 
     config = entry.as_dict()
-    await mqtt.async_subscribe(hass, config['data']['mqtt_topic'], scanner.async_on_mqtt_message, encoding=None)
+    entry.async_on_unload(
+        await mqtt.async_subscribe(
+            hass, config['data']['mqtt_topic'],
+            scanner.async_on_mqtt_message, encoding=None,
+        )
+    )
+    hass.data[DOMAIN][entry.entry_id] = scanner
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
-
-    return unload_ok
+    # This integration has no entity platforms. ConfigEntry runs the registered
+    # MQTT, scanner and timer cleanup callbacks when it is unloaded.
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    return True
